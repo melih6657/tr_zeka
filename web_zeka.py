@@ -2,82 +2,78 @@
 import streamlit as st
 import google.generativeai as genai
 from PIL import Image
+import time
 
-# --- SAYFA YAPILANDIRMASI ---
+# --- SAYFA AYARLARI ---
 st.set_page_config(page_title="TR ZEKA PRO", page_icon="🤖")
 
-# --- API AYARI ---
+# --- API YAPILANDIRMASI ---
 API_KEY = "AIzaSyAnicoAbklZ934WeLKaOcYF25qiZBpCqkQ"
 genai.configure(api_key=API_KEY)
 
-# --- YAN PANEL (AYARLAR) ---
+# --- AYARLAR VE HAFIZA ---
+if "nickname" not in st.session_state:
+    st.session_state.nickname = "Dostum"
+
 with st.sidebar:
-    st.title("⚙️ TR ZEKA AYARLARI")
-    # Session State kullanarak ismi hafızada tutuyoruz
-    if "nickname" not in st.session_state:
-        st.session_state.nickname = "Dostum"
-    
+    st.title("⚙️ AYARLAR")
     st.session_state.nickname = st.text_input("Sana nasıl hitap edeyim?", value=st.session_state.nickname)
     tone = st.selectbox("Asistan Tavrı", ["Yardımsever", "Şakacı", "Ciddi", "Dahi"])
-    
-    st.divider()
     if st.button("Sohbeti Sıfırla"):
         st.session_state.messages = []
         st.rerun()
 
-st.title("🤖 TR ZEKA PRO v6.1")
+st.title("🤖 TR ZEKA PRO v6.2")
 
-# --- SOHBET HAFIZASI ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Eski mesajları ekrana bas
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# --- FOTOĞRAF YÜKLEME ---
 uploaded_file = st.sidebar.file_uploader("📷 Resim Analizi", type=["jpg", "png", "jpeg"])
 
-# --- YAPAY ZEKA MOTORU ---
-def ask_ai(prompt, file):
-    # Denenecek modeller
-    try_models = ["gemini-1.5-flash", "gemini-pro"]
+# --- BAĞLANTIYI DÜZELTEN ANA MOTOR ---
+def ask_ai_secure(prompt, file):
+    # Denenecek modeller ve bağlantı varyasyonları
+    try_models = ["gemini-1.5-flash", "gemini-pro", "models/gemini-1.5-flash", "models/gemini-pro"]
     
+    # Her model için 2 kez deneme (Toplam 8 deneme yapar)
     for m_name in try_models:
-        try:
-            model = genai.GenerativeModel(m_name)
-            instr = f"Senin adın TR Zeka. Kullanıcıya '{st.session_state.nickname}' de. Tavrın '{tone}' olsun. "
-            
-            if file and "flash" in m_name:
-                img = Image.open(file)
-                response = model.generate_content([instr + prompt, img])
-            else:
-                response = model.generate_content(instr + prompt)
-            
-            # Yanıtın boş olup olmadığını kontrol et
-            if response and response.text:
-                return response.text
-        except Exception as e:
-            # Hata detayını terminale yaz ama kullanıcıya nazik davran
-            print(f"Model {m_name} hatası: {e}")
-            continue
-            
-    return "ERROR_STOPPED" # Hiçbiri çalışmazsa bu özel kodu döndür
+        for attempt in range(2): 
+            try:
+                model = genai.GenerativeModel(m_name)
+                instr = f"Senin adın TR Zeka. Kullanıcıya '{st.session_state.nickname}' de. Tavrın '{tone}' olsun. "
+                
+                if file and "flash" in m_name:
+                    img = Image.open(file)
+                    response = model.generate_content([instr + prompt, img], request_options={"timeout": 600})
+                else:
+                    response = model.generate_content(instr + prompt, request_options={"timeout": 600})
+                
+                if response and response.text:
+                    return response.text
+            except Exception as e:
+                print(f"Deneme Başarısız ({m_name}, Tekrar: {attempt}): {e}")
+                time.sleep(1) # Bağlantı hatasında 1 saniye bekle ve tekrar dene
+                continue
+                
+    return "CONNECTION_FAILED"
 
-# --- SORU-CEVAP ALANI ---
+# --- SORU-CEVAP DÖNGÜSÜ ---
 if prompt := st.chat_input("Mesajınızı yazın..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Düşünüyorum..."):
-            ai_response = ask_ai(prompt, uploaded_file)
+        with st.spinner("Sunucuya bağlanıyorum, lütfen bekleyin... 🚀"):
+            ai_response = ask_ai_secure(prompt, uploaded_file)
             
-            if ai_response == "ERROR_STOPPED":
-                # Senin istediğin o özel hata mesajı
-                error_text = f"Hata verdiğim için özür dilerim ama bir bağlantı sorunu beni durdurdu {st.session_state.nickname}. Lütfen biraz bekleyip tekrar dene! 😅"
+            if ai_response == "CONNECTION_FAILED":
+                # İstediğin nazik hata mesajı
+                error_text = f"Hata verdiğim için özür dilerim ama bağlantı sorunu beni durdurdu {st.session_state.nickname}. Sunucuya şu an ulaşamıyorum, lütfen kısa süre sonra tekrar dene! 😅"
                 st.error(error_text)
             else:
                 st.markdown(ai_response)
